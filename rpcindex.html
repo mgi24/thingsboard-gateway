@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThingsBoard RPC Gateway Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f0c20 0%, #15102a 50%, #060214 100%);
+      --glass-panel: rgba(22, 17, 45, 0.65);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --text-main: #f3f0ff;
+      --text-muted: #9f9cb6;
+      --accent: #7c4dff;
+      --accent-glow: rgba(124, 77, 255, 0.4);
+      --success: #00e676;
+      --success-glow: rgba(0, 230, 118, 0.3);
+      --error: #ff1744;
+      --error-glow: rgba(255, 23, 68, 0.3);
+      --font: 'Outfit', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Background decorative blobs */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(100px);
+      z-index: -1;
+      opacity: 0.25;
+    }
+    .blob-1 {
+      top: -10%;
+      left: 10%;
+      width: 400px;
+      height: 400px;
+      background: var(--accent);
+    }
+    .blob-2 {
+      bottom: 10%;
+      right: 15%;
+      width: 500px;
+      height: 500px;
+      background: #00b0ff;
+    }
+
+    header {
+      background: rgba(15, 12, 32, 0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--glass-border);
+      padding: 16px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-container {
+      background: linear-gradient(135deg, var(--accent) 0%, #00b0ff 100%);
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: white;
+      box-shadow: 0 4px 15px var(--accent-glow);
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      background: linear-gradient(to right, #ffffff, #d3c4ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .conn-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--glass-border);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--text-muted);
+      transition: background-color 0.3s, box-shadow 0.3s;
+    }
+
+    .status-dot.connected {
+      background-color: var(--success);
+      box-shadow: 0 0 10px var(--success-glow);
+    }
+
+    .status-dot.disconnected {
+      background-color: var(--error);
+      box-shadow: 0 0 10px var(--error-glow);
+    }
+
+    main {
+      flex: 1;
+      padding: 40px;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 32px;
+    }
+
+    @media (max-width: 1024px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 20px;
+      }
+    }
+
+    .sidebar-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .panel {
+      background: var(--glass-panel);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(12px);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .panel:hover {
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ffffff;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 10px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    input, select {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text-main);
+      font-family: var(--font);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    button.btn-primary {
+      background: linear-gradient(135deg, var(--accent) 0%, #512da8 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(124, 77, 255, 0.2);
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+      width: 100%;
+    }
+
+    button.btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(124, 77, 255, 0.35);
+    }
+
+    button.btn-primary:active {
+      transform: translateY(0);
+    }
+
+    /* Toast Notification */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 1000;
+    }
+
+    .toast {
+      background: rgba(20, 15, 38, 0.95);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 14px 20px;
+      color: var(--text-main);
+      font-size: 14px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 250px;
+      animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .toast.success {
+      border-left: 4px solid var(--success);
+    }
+
+    .toast.error {
+      border-left: 4px solid var(--error);
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Dashboard/Devices Area */
+    .dashboard-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .dashboard-title {
+      font-size: 22px;
+      font-weight: 600;
+      color: #ffffff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+
+    .device-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+
+    .device-card {
+      background: var(--glass-panel);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      position: relative;
+    }
+
+    .device-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(124, 77, 255, 0.3);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .device-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 10px;
+    }
+
+    .device-name {
+      font-weight: 600;
+      font-size: 16px;
+      color: #ffffff;
+      word-break: break-all;
+    }
+
+    .btn-delete-device {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: var(--font);
+      font-weight: 500;
+      transition: color 0.2s, background-color 0.2s;
+    }
+
+    .btn-delete-device:hover {
+      color: var(--error);
+      background: rgba(255, 23, 68, 0.1);
+    }
+
+    .variables-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .variable-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      padding: 8px 12px;
+      transition: background-color 0.2s;
+    }
+
+    .variable-row:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .variable-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .variable-name {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .variable-value-display {
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .controls-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-ctrl {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--glass-border);
+      background: rgba(255, 255, 255, 0.05);
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s, border-color 0.15s, transform 0.1s;
+    }
+
+    .btn-ctrl:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    .btn-ctrl:active {
+      transform: scale(0.92);
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 40px;
+      background: rgba(255,255,255,0.02);
+      border: 2px dashed rgba(255,255,255,0.08);
+      border-radius: 16px;
+      color: var(--text-muted);
+      font-size: 15px;
+    }
+
+    .empty-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+    
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10, 8, 20, 0.75);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+
+  <header>
+    <div class="brand-section">
+      <div class="logo-container">TB</div>
+      <div>
+        <h1>ThingsBoard RPC Gateway</h1>
+      </div>
+    </div>
+    <div class="conn-status" id="conn-status-container">
+      <div class="status-dot" id="mqtt-status-dot"></div>
+      <span id="mqtt-status-text">MQTT Offline</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="sidebar-panel">
+      <!-- Settings Panel -->
+      <section class="panel">
+        <h2 class="panel-title">ThingsBoard Settings</h2>
+        <form id="settings-form">
+          <div class="form-group">
+            <label for="tb_ip">ThingsBoard Host/IP</label>
+            <input type="text" id="tb_ip" placeholder="e.g. 192.168.0.117" required>
+          </div>
+          <div class="form-group">
+            <label for="tb_port">MQTT Port</label>
+            <input type="number" id="tb_port" placeholder="1883" value="1883" required>
+          </div>
+          <div class="form-group">
+            <label for="tb_token">Gateway Access Token</label>
+            <input type="password" id="tb_token" placeholder="Gateway token from ThingsBoard" required>
+          </div>
+          <div class="btn-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <button type="submit" class="btn-primary">Save Settings</button>
+            <button type="button" id="btn-test-settings" class="btn-primary" style="background: linear-gradient(135deg, #00b0ff 0%, #0081cb 100%); box-shadow: 0 4px 15px rgba(0, 176, 255, 0.2);">Test Connection</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Add Device Panel -->
+      <section class="panel">
+        <h2 class="panel-title">Add Gateway Device</h2>
+        <form id="device-form">
+          <div class="form-group">
+            <label for="device_name">Device Name</label>
+            <input type="text" id="device_name" placeholder="e.g. SWITCH_1" required>
+          </div>
+          <button type="submit" class="btn-primary">Add Device</button>
+        </form>
+      </section>
+
+      <!-- Add Variable Panel -->
+      <section class="panel">
+        <h2 class="panel-title">Add Variable</h2>
+        <form id="variable-form">
+          <div class="form-group">
+            <label for="var_device_id">Target Device</label>
+            <select id="var_device_id" required>
+              <option value="" disabled selected>Select a device</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="var_name">Variable Name</label>
+            <input type="text" id="var_name" placeholder="e.g. status" required>
+          </div>
+          <div class="form-group">
+            <label for="var_rpc_method">RPC Method</label>
+            <input type="text" id="var_rpc_method" placeholder="e.g. setStatus">
+          </div>
+          <button type="submit" class="btn-primary">Add Variable</button>
+        </form>
+      </section>
+    </div>
+
+    <!-- Active Devices & Variables Dashboard -->
+    <div class="dashboard-panel">
+      <div class="dashboard-header">
+        <h2 class="dashboard-title">Monitored Devices & Telemetry</h2>
+      </div>
+
+      <div class="device-grid" id="devices-grid">
+        <div class="empty-state">
+          <div class="empty-icon">🔌</div>
+          <p>No devices configured yet. Add a device from the panel on the left to begin.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Edit Variable Modal -->
+  <div id="edit-variable-modal" class="modal">
+    <div class="panel" style="width: 100%; max-width: 400px; margin: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.6);">
+      <h2 class="panel-title">Edit Variable</h2>
+      <form id="edit-variable-form">
+        <input type="hidden" id="edit_var_id">
+        <div class="form-group">
+          <label for="edit_var_name">Variable Name</label>
+          <input type="text" id="edit_var_name" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="edit_var_rpc_method">RPC Method</label>
+          <input type="text" id="edit_var_rpc_method" placeholder="e.g. setStatus" autocomplete="off">
+        </div>
+        <div class="btn-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px;">
+          <button type="submit" class="btn-primary">Save Changes</button>
+          <button type="button" id="btn-close-edit-modal" class="btn-primary" style="background: rgba(255,255,255,0.05); color: #fff; border: 1px solid var(--glass-border); box-shadow: none;">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script>
+    // State management
+    let state = {
+      settings: { tb_ip: '', tb_port: 1883, tb_token: '' },
+      mqtt_connected: false,
+      devices: []
+    };
+
+    // DOM Elements
+    const settingsForm = document.getElementById('settings-form');
+    const deviceForm = document.getElementById('device-form');
+    const variableForm = document.getElementById('variable-form');
+    const devicesGrid = document.getElementById('devices-grid');
+    const deviceSelect = document.getElementById('var_device_id');
+    const mqttStatusDot = document.getElementById('mqtt-status-dot');
+    const mqttStatusText = document.getElementById('mqtt-status-text');
+
+    // Notify helper
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `
+        <span>${type === 'success' ? '✓' : '✗'}</span>
+        <span>${message}</span>
+      `;
+      container.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'opacity 0.3s, transform 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    // Refresh State from API
+    async function fetchState() {
+      try {
+        const response = await fetch('/api/state');
+        if (!response.ok) throw new Error('Failed to fetch gateway state');
+        const newState = await response.json();
+        
+        // Update state cache
+        state = newState;
+        
+        // Update UI
+        updateUI();
+      } catch (err) {
+        console.error('Error refreshing state:', err);
+      }
+    }
+
+    let lastDropdownSignature = "";
+    let lastGridSignature = "";
+
+    // Update the entire UI elements
+    function updateUI() {
+      // 1. MQTT Connection indicator
+      if (state.mqtt_connected) {
+        mqttStatusDot.className = 'status-dot connected';
+        mqttStatusText.textContent = 'MQTT Connected';
+      } else {
+        mqttStatusDot.className = 'status-dot disconnected';
+        mqttStatusText.textContent = 'MQTT Offline';
+      }
+
+      // 2. Settings fields (if not focused and currently empty to avoid overwrite while typing)
+      if (state.settings) {
+        const ipInput = document.getElementById('tb_ip');
+        const portInput = document.getElementById('tb_port');
+        const tokenInput = document.getElementById('tb_token');
+
+        if (document.activeElement !== ipInput && !ipInput.value) ipInput.value = state.settings.tb_ip || '';
+        if (document.activeElement !== portInput && portInput.value === '1883') portInput.value = state.settings.tb_port || 1883;
+        if (document.activeElement !== tokenInput && !tokenInput.value) tokenInput.value = state.settings.tb_token || '';
+      }
+
+      // 3. Dropdown for adding variables (rebuild only if structure changes)
+      const currentDropdownSig = JSON.stringify(state.devices.map(d => ({ id: d.id, name: d.name })));
+      if (lastDropdownSignature !== currentDropdownSig) {
+        lastDropdownSignature = currentDropdownSig;
+        const currentSelected = deviceSelect.value;
+        deviceSelect.innerHTML = '<option value="" disabled>Select a device</option>';
+        let selectHasActive = false;
+
+        state.devices.forEach(device => {
+          const opt = document.createElement('option');
+          opt.value = device.id;
+          opt.textContent = device.name;
+          if (device.id.toString() === currentSelected) {
+            opt.selected = true;
+            selectHasActive = true;
+          }
+          deviceSelect.appendChild(opt);
+        });
+        if (!selectHasActive && state.devices.length > 0) {
+          deviceSelect.selectedIndex = 0; // Choose the disabled default placeholder
+        }
+      }
+
+      // 4. Device and Variable Grid
+      const currentGridSig = JSON.stringify(state.devices.map(d => ({
+        id: d.id,
+        name: d.name,
+        variables: d.variables.map(v => ({ id: v.id, name: v.name, rpc_method: v.rpc_method }))
+      })));
+
+      if (lastGridSignature === currentGridSig) {
+        // Structure is identical, only update the values to avoid UI flickering/movement
+        state.devices.forEach(device => {
+          device.variables.forEach(v => {
+            const valSpan = document.getElementById(`var-val-${v.id}`);
+            if (valSpan && valSpan.textContent !== String(v.value)) {
+              valSpan.textContent = v.value;
+            }
+          });
+        });
+        return;
+      }
+      lastGridSignature = currentGridSig;
+
+      if (state.devices.length === 0) {
+        devicesGrid.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">🔌</div>
+            <p>No devices configured yet. Add a device from the panel on the left to begin.</p>
+          </div>
+        `;
+        return;
+      }
+
+      devicesGrid.innerHTML = '';
+      state.devices.forEach(device => {
+        const card = document.createElement('div');
+        card.className = 'device-card';
+        
+        // Header
+        const header = document.createElement('div');
+        header.className = 'device-header';
+        
+        const name = document.createElement('span');
+        name.className = 'device-name';
+        name.textContent = device.name;
+        header.appendChild(name);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn-delete-device';
+        deleteBtn.textContent = 'DELETE';
+        deleteBtn.onclick = () => deleteDevice(device.id);
+        header.appendChild(deleteBtn);
+        
+        card.appendChild(header);
+
+        // Variables
+        const varList = document.createElement('div');
+        varList.className = 'variables-list';
+        
+        if (device.variables.length === 0) {
+          const emptyVars = document.createElement('p');
+          emptyVars.style.fontSize = '12px';
+          emptyVars.style.color = 'var(--text-muted)';
+          emptyVars.style.fontStyle = 'italic';
+          emptyVars.style.padding = '8px 0';
+          emptyVars.textContent = 'No variables registered. Add a variable to sync telemetry.';
+          varList.appendChild(emptyVars);
+        } else {
+          device.variables.forEach(v => {
+            const row = document.createElement('div');
+            row.className = 'variable-row';
+            
+            const info = document.createElement('div');
+            info.className = 'variable-info';
+            
+            const vName = document.createElement('span');
+            vName.className = 'variable-name';
+            vName.textContent = v.rpc_method ? `${v.name} (RPC: ${v.rpc_method})` : v.name;
+            
+            const vVal = document.createElement('span');
+            vVal.className = 'variable-value-display';
+            vVal.id = `var-val-${v.id}`;
+            vVal.textContent = v.value;
+            
+            info.appendChild(vName);
+            info.appendChild(vVal);
+            row.appendChild(info);
+
+            // Controls
+            const ctrl = document.createElement('div');
+            ctrl.className = 'controls-wrapper';
+            
+            const decBtn = document.createElement('button');
+            decBtn.className = 'btn-ctrl';
+            decBtn.textContent = '-';
+            decBtn.onclick = () => updateVariable(v.id, 'decrement');
+            
+            const incBtn = document.createElement('button');
+            incBtn.className = 'btn-ctrl';
+            incBtn.textContent = '+';
+            incBtn.onclick = () => updateVariable(v.id, 'increment');
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn-ctrl';
+            editBtn.textContent = '✏️';
+            editBtn.style.fontSize = '12px';
+            editBtn.onclick = () => openEditModal(v.id, v.name, v.rpc_method);
+            
+            ctrl.appendChild(decBtn);
+            ctrl.appendChild(incBtn);
+            ctrl.appendChild(editBtn);
+            row.appendChild(ctrl);
+            
+            varList.appendChild(row);
+          });
+        }
+        
+        card.appendChild(varList);
+        devicesGrid.appendChild(card);
+      });
+    }
+
+    // Actions implementation
+    settingsForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const tb_ip = document.getElementById('tb_ip').value;
+      const tb_port = parseInt(document.getElementById('tb_port').value);
+      const tb_token = document.getElementById('tb_token').value;
+
+      try {
+        const res = await fetch('/api/settings/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tb_ip, tb_port, tb_token })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(data.message || 'Settings saved successfully!');
+          fetchState();
+        } else {
+          showToast(data.detail || 'Failed to save settings', 'error');
+        }
+      } catch (err) {
+        showToast('Network error, please try again.', 'error');
+      }
+    };
+
+    const testBtn = document.getElementById('btn-test-settings');
+    testBtn.onclick = async () => {
+      const tb_ip = document.getElementById('tb_ip').value;
+      const tb_port = parseInt(document.getElementById('tb_port').value);
+      const tb_token = document.getElementById('tb_token').value;
+
+      if (!tb_ip || !tb_token) {
+        showToast('IP and Token are required to test connection.', 'error');
+        return;
+      }
+
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing...';
+
+      try {
+        const res = await fetch('/api/settings/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tb_ip, tb_port, tb_token })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(data.message || 'Connection test successful!');
+        } else {
+          showToast(data.detail || 'Connection test failed.', 'error');
+        }
+      } catch (err) {
+        showToast('Network error testing connection.', 'error');
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Test Connection';
+      }
+    };
+
+    deviceForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('device_name').value.trim();
+      if (!name) return;
+
+      try {
+        const res = await fetch('/api/devices/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Device added successfully!');
+          document.getElementById('device_name').value = '';
+          fetchState();
+        } else {
+          showToast(data.detail || 'Failed to add device', 'error');
+        }
+      } catch (err) {
+        showToast('Network error, please try again.', 'error');
+      }
+    };
+
+    variableForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const device_id = parseInt(deviceSelect.value);
+      const name = document.getElementById('var_name').value.trim();
+      const rpc_method = document.getElementById('var_rpc_method').value.trim();
+      if (!device_id || !name) return;
+
+      try {
+        const res = await fetch('/api/variables/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_id, name, rpc_method })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Variable added successfully!');
+          document.getElementById('var_name').value = '';
+          document.getElementById('var_rpc_method').value = '';
+          fetchState();
+        } else {
+          showToast(data.detail || 'Failed to add variable (duplicate?)', 'error');
+        }
+      } catch (err) {
+        showToast('Network error, please try again.', 'error');
+      }
+    };
+
+    async function deleteDevice(id) {
+      if (!confirm('Are you sure you want to delete this device and all its variables?')) return;
+      try {
+        const res = await fetch(`/api/devices/${id}/delete`, { method: 'POST' });
+        if (res.ok) {
+          showToast('Device deleted successfully.');
+          fetchState();
+        } else {
+          const data = await res.json();
+          showToast(data.detail || 'Failed to delete device', 'error');
+        }
+      } catch (err) {
+        showToast('Network error.', 'error');
+      }
+    }
+
+    async function updateVariable(id, operation) {
+      try {
+        const res = await fetch(`/api/variables/${id}/${operation}`, { method: 'POST' });
+        if (res.ok) {
+          fetchState();
+        } else {
+          const data = await res.json();
+          showToast(data.detail || `Failed to ${operation} value.`, 'error');
+        }
+      } catch (err) {
+        showToast('Network error.', 'error');
+      }
+    }
+
+    // Modal controls
+    const editModal = document.getElementById('edit-variable-modal');
+    const editForm = document.getElementById('edit-variable-form');
+    const editVarId = document.getElementById('edit_var_id');
+    const editVarName = document.getElementById('edit_var_name');
+    const editVarRpcMethod = document.getElementById('edit_var_rpc_method');
+    const btnCloseModal = document.getElementById('btn-close-edit-modal');
+
+    function openEditModal(id, name, rpcMethod) {
+      editVarId.value = id;
+      editVarName.value = name;
+      editVarRpcMethod.value = rpcMethod || '';
+      editModal.style.display = 'flex';
+    }
+
+    function closeEditModal() {
+      editModal.style.display = 'none';
+      editForm.reset();
+    }
+
+    btnCloseModal.onclick = closeEditModal;
+
+    editForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const id = editVarId.value;
+      const name = editVarName.value.trim();
+      const rpc_method = editVarRpcMethod.value.trim();
+
+      if (!name) return;
+
+      try {
+        const res = await fetch(`/api/variables/${id}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, rpc_method })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Variable updated successfully.');
+          closeEditModal();
+          fetchState();
+        } else {
+          showToast(data.detail || 'Failed to update variable', 'error');
+        }
+      } catch (err) {
+        showToast('Network error, please try again.', 'error');
+      }
+    };
+
+    // Startup configuration
+    fetchState();
+    // Regular polling every second
+    setInterval(fetchState, 1000);
+  </script>
+</body>
+</html>
