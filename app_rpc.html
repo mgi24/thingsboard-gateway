@@ -78,7 +78,7 @@
     }
 
     h2 {
-      margin: 0 0 12px;
+      margin: 0 0 16px;
       font-size: 18px;
       font-weight: 600;
     }
@@ -93,7 +93,7 @@
 
     .split {
       display: grid;
-      grid-template-columns: 1.4fr 1fr;
+      grid-template-columns: 1fr 1fr;
       gap: 18px;
       align-items: start;
     }
@@ -200,7 +200,7 @@
       font-size: 13px;
     }
 
-    input {
+    input, select {
       padding: 10px 12px;
       border-radius: 10px;
       border: 1px solid var(--line);
@@ -364,46 +364,74 @@
           <h1>Settings</h1>
         </div>
 
-        <div id="settings-message" class="message"></div>
-
-        <section class="panel" style="max-width: 560px;">
-          <form id="settings-form">
-            <div class="form-row">
-              <label for="tb_ip">Thingsboard IP</label>
-              <input id="tb_ip" name="tb_ip" type="text" />
-            </div>
-            <div class="form-row">
-              <label for="tb_port">Port</label>
-              <input id="tb_port" name="tb_port" type="number" min="1" max="65535" />
-            </div>
-            <div class="form-row">
-              <label for="tb_user">Username</label>
-              <input id="tb_user" name="tb_user" type="text" />
-            </div>
-            <div class="form-row">
-              <label for="tb_pass">Password</label>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                <input id="tb_pass" name="tb_pass" type="password" style="flex: 1;" />
-                <button class="btn secondary inline" id="toggle-pass" type="button">
-                  Show
-                </button>
+        <div class="split">
+          <section class="panel">
+            <h2>Web Settings</h2>
+            <div id="web-settings-message" class="message"></div>
+            <form id="web-settings-form">
+              <div class="form-row">
+                <label for="tb_ip">Thingsboard IP</label>
+                <input id="tb_ip" name="tb_ip" type="text" placeholder="e.g. 192.168.1.100" />
               </div>
+              <div class="form-row">
+                <label for="tb_port">Port</label>
+                <input id="tb_port" name="tb_port" type="number" min="1" max="65535" value="8080" />
+              </div>
+              <div class="form-row">
+                <label for="tb_user">Username</label>
+                <input id="tb_user" name="tb_user" type="text" />
+              </div>
+              <div class="form-row">
+                <label for="tb_pass">Password</label>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <input id="tb_pass" name="tb_pass" type="password" style="flex: 1;" />
+                  <button class="btn secondary inline" id="toggle-pass" type="button">
+                    Show
+                  </button>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn" id="web-settings-save" type="button">Save</button>
+                <button class="btn secondary" id="web-settings-test" type="button">Test</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <h2>RPC Settings</h2>
+            <div id="rpc-settings-message" class="message"></div>
+            <form id="rpc-settings-form">
+              <div class="form-row">
+                <label for="rpc_ip">Thingsboard IP</label>
+                <input id="rpc_ip" name="rpc_ip" type="text" placeholder="e.g. 192.168.1.100" />
+              </div>
+              <div class="form-row">
+                <label for="rpc_port">Port</label>
+                <input id="rpc_port" name="rpc_port" type="number" min="1" max="65535" value="1883" />
+              </div>
+              <div class="form-row">
+                <label for="rpc_token">Access Token</label>
+                <input id="rpc_token" name="rpc_token" type="text" placeholder="Gateway Access Token" />
+              </div>
+              <div class="form-actions">
+                <button class="btn" id="rpc-settings-save" type="button">Save</button>
+                <button class="btn secondary" id="rpc-settings-test" type="button">Test</button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        <section class="panel" style="margin-top: 18px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h2 style="margin: 0;">Incoming RPC</h2>
+            <div class="form-actions">
+              <button class="btn secondary inline" id="rpc-log-refresh" type="button">Refresh Logs</button>
+              <button class="btn secondary inline" id="rpc-log-clear" type="button">Clear Logs</button>
             </div>
-            <h2 style="margin-top: 16px;">RPC Settings (Gateway)</h2>
-            <div class="form-row">
-              <label for="tb_rpc_port">MQTT RPC Port</label>
-              <input id="tb_rpc_port" name="tb_rpc_port" type="number" min="1" max="65535" value="1883" />
-            </div>
-            <div class="form-row">
-              <label for="tb_rpc_token">Gateway Access Token</label>
-              <input id="tb_rpc_token" name="tb_rpc_token" type="text" />
-            </div>
-            <div class="form-actions" style="margin-top: 16px;">
-              <button class="btn" id="settings-save" type="button">Save</button>
-              <button class="btn secondary" id="settings-test" type="button">Test HTTP</button>
-              <button class="btn secondary" id="settings-test-rpc" type="button">Test RPC</button>
-            </div>
-          </form>
+          </div>
+          <div id="rpc-log-container" style="max-height: 380px; overflow-y: auto; background: #1a1614; color: #e5ddd2; padding: 14px; border-radius: 12px; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.6; border: 1px solid var(--line);">
+            <div style="color: #888;">Belum ada incoming RPC log.</div>
+          </div>
         </section>
       </section>
 
@@ -465,6 +493,7 @@
             <div class="breadcrumb" id="device-breadcrumb">Modbus</div>
           </div>
           <div class="form-actions">
+            <button class="btn secondary" id="device-push-all" type="button">Push All Telemetry</button>
             <button class="btn" id="device-add" type="button">Add Device</button>
             <button class="btn secondary" id="device-back" type="button">Back</button>
           </div>
@@ -484,14 +513,6 @@
               <div class="form-row">
                 <label for="device-unit">Unit ID</label>
                 <input id="device-unit" name="device-unit" type="number" min="1" />
-              </div>
-              <div class="form-row">
-                <label for="device-token">Thingsboard Access Token (optional)</label>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <input id="device-token" name="device-token" type="text" style="flex: 1;" />
-                  <button class="btn secondary inline" id="device-token-test" type="button">Test Token</button>
-                </div>
-                <div id="device-token-message" class="message" style="margin: 4px 0 0;"></div>
               </div>
 
               <div class="form-row">
@@ -517,7 +538,6 @@
                 <tr>
                   <th>Name</th>
                   <th>Unit ID</th>
-                  <th>Token</th>
                   <th>Data</th>
                   <th>Aksi</th>
                 </tr>
@@ -537,13 +557,19 @@
     const navSettings = document.getElementById("nav-settings");
     const navModbus = document.getElementById("nav-modbus");
 
-    const settingsMessage = document.getElementById("settings-message");
+    const webSettingsMessage = document.getElementById("web-settings-message");
+    const rpcSettingsMessage = document.getElementById("rpc-settings-message");
     const modbusMessage = document.getElementById("modbus-message");
 
-    const settingsSaveBtn = document.getElementById("settings-save");
-    const settingsTestBtn = document.getElementById("settings-test");
-    const settingsTestRpcBtn = document.getElementById("settings-test-rpc");
+    const webSettingsSaveBtn = document.getElementById("web-settings-save");
+    const webSettingsTestBtn = document.getElementById("web-settings-test");
+    const rpcSettingsSaveBtn = document.getElementById("rpc-settings-save");
+    const rpcSettingsTestBtn = document.getElementById("rpc-settings-test");
     const togglePassBtn = document.getElementById("toggle-pass");
+
+    const rpcLogContainer = document.getElementById("rpc-log-container");
+    const rpcLogRefreshBtn = document.getElementById("rpc-log-refresh");
+    const rpcLogClearBtn = document.getElementById("rpc-log-clear");
 
     const modbusAddBtn = document.getElementById("modbus-add");
     const modbusSaveBtn = document.getElementById("modbus-save");
@@ -556,6 +582,7 @@
     const deviceMessage = document.getElementById("device-message");
     const deviceAddBtn = document.getElementById("device-add");
     const deviceBackBtn = document.getElementById("device-back");
+    const devicePushAllBtn = document.getElementById("device-push-all");
     const deviceFormPanel = document.getElementById("device-form-panel");
     const deviceFormTitle = document.getElementById("device-form-title");
     const deviceTableBody = document.getElementById("device-table-body");
@@ -563,8 +590,6 @@
     const deviceBreadcrumb = document.getElementById("device-breadcrumb");
     const deviceSaveBtn = document.getElementById("device-save");
     const deviceCancelBtn = document.getElementById("device-cancel");
-    const deviceTokenTestBtn = document.getElementById("device-token-test");
-    const deviceTokenMessage = document.getElementById("device-token-message");
     const timeseriesList = document.getElementById("timeseries-list");
     const timeseriesAddBtn = document.getElementById("timeseries-add");
 
@@ -602,6 +627,9 @@
       navSettings.classList.toggle("active", isSettings);
       navModbus.classList.toggle("active", isModbus || isDevice);
 
+      if (isSettings) {
+        fetchRpcLogs();
+      }
       if (isModbus) {
         refreshModbusList();
       }
@@ -637,14 +665,20 @@
       togglePassBtn.textContent = isPassword ? "Hide" : "Show";
     });
 
-    function settingsPayload() {
+    function webSettingsPayload() {
       return {
         tb_ip: document.getElementById("tb_ip").value.trim(),
         tb_port: document.getElementById("tb_port").value.trim(),
         tb_user: document.getElementById("tb_user").value.trim(),
         tb_pass: document.getElementById("tb_pass").value,
-        tb_rpc_port: document.getElementById("tb_rpc_port").value.trim(),
-        tb_rpc_token: document.getElementById("tb_rpc_token").value.trim(),
+      };
+    }
+
+    function rpcSettingsPayload() {
+      return {
+        rpc_ip: document.getElementById("rpc_ip").value.trim(),
+        rpc_port: document.getElementById("rpc_port").value.trim(),
+        rpc_token: document.getElementById("rpc_token").value.trim(),
       };
     }
 
@@ -656,57 +690,154 @@
         }
         const data = await response.json();
         document.getElementById("tb_ip").value = data.tb_ip || "";
-        document.getElementById("tb_port").value = data.tb_port || "";
+        document.getElementById("tb_port").value = data.tb_port || "8080";
         document.getElementById("tb_user").value = data.tb_user || "";
         document.getElementById("tb_pass").value = data.tb_pass || "";
-        document.getElementById("tb_rpc_port").value = data.tb_rpc_port || "1883";
-        document.getElementById("tb_rpc_token").value = data.tb_rpc_token || "";
+        document.getElementById("rpc_ip").value = data.rpc_ip || "";
+        document.getElementById("rpc_port").value = data.rpc_port || "1883";
+        document.getElementById("rpc_token").value = data.rpc_token || "";
       } catch (err) {
-        showMessage(settingsMessage, err.message || "Gagal memuat settings.", "error");
+        showMessage(webSettingsMessage, err.message || "Gagal memuat settings.", "error");
       }
     }
 
-    let settingsMsgTimer = null;
-
-    function showSettingsMessage(text, type) {
-      clearTimeout(settingsMsgTimer);
-      showMessage(settingsMessage, text, type);
-      settingsMsgTimer = setTimeout(() => clearMessage(settingsMessage), 5000);
-    }
-
-    async function sendSettings(endpoint, label) {
-      settingsSaveBtn.disabled = true;
-      settingsTestBtn.disabled = true;
-      const origSave = settingsSaveBtn.textContent;
-      const origTest = settingsTestBtn.textContent;
-      if (label === "save") settingsSaveBtn.textContent = "Menyimpan\u2026";
-      else settingsTestBtn.textContent = "Testing\u2026";
+    async function sendWebSettings(endpoint, label) {
+      webSettingsSaveBtn.disabled = true;
+      webSettingsTestBtn.disabled = true;
+      const origSave = webSettingsSaveBtn.textContent;
+      const origTest = webSettingsTestBtn.textContent;
+      if (label === "save") webSettingsSaveBtn.textContent = "Menyimpan\u2026";
+      else webSettingsTestBtn.textContent = "Testing\u2026";
       try {
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(settingsPayload()),
+          body: JSON.stringify(webSettingsPayload()),
         });
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data.detail || "Terjadi kesalahan.");
         }
-        showSettingsMessage(data.message || "Berhasil.", "success");
+        showMessage(webSettingsMessage, data.message || "Berhasil.", "success");
+        setTimeout(() => clearMessage(webSettingsMessage), 5000);
       } catch (err) {
-        showSettingsMessage(err.message || "Terjadi kesalahan.", "error");
+        showMessage(webSettingsMessage, err.message || "Terjadi kesalahan.", "error");
       } finally {
-        settingsSaveBtn.disabled = false;
-        settingsTestBtn.disabled = false;
-        settingsTestRpcBtn.disabled = false;
-        settingsSaveBtn.textContent = origSave;
-        settingsTestBtn.textContent = origTest;
-        if (label === "test-rpc") settingsTestRpcBtn.textContent = "Test RPC";
+        webSettingsSaveBtn.disabled = false;
+        webSettingsTestBtn.disabled = false;
+        webSettingsSaveBtn.textContent = origSave;
+        webSettingsTestBtn.textContent = origTest;
       }
     }
 
-    settingsSaveBtn.addEventListener("click", () => sendSettings("/api/settings/save", "save"));
-    settingsTestBtn.addEventListener("click", () => sendSettings("/api/settings/test", "test"));
-    settingsTestRpcBtn.addEventListener("click", () => sendSettings("/api/settings/test-rpc", "test-rpc"));
+    async function sendRpcSettings(endpoint, label) {
+      rpcSettingsSaveBtn.disabled = true;
+      rpcSettingsTestBtn.disabled = true;
+      const origSave = rpcSettingsSaveBtn.textContent;
+      const origTest = rpcSettingsTestBtn.textContent;
+      if (label === "save") rpcSettingsSaveBtn.textContent = "Menyimpan\u2026";
+      else rpcSettingsTestBtn.textContent = "Testing\u2026";
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rpcSettingsPayload()),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Terjadi kesalahan.");
+        }
+        showMessage(rpcSettingsMessage, data.message || "Berhasil.", "success");
+        setTimeout(() => clearMessage(rpcSettingsMessage), 5000);
+      } catch (err) {
+        showMessage(rpcSettingsMessage, err.message || "Terjadi kesalahan.", "error");
+      } finally {
+        rpcSettingsSaveBtn.disabled = false;
+        rpcSettingsTestBtn.disabled = false;
+        rpcSettingsSaveBtn.textContent = origSave;
+        rpcSettingsTestBtn.textContent = origTest;
+      }
+    }
+
+    webSettingsSaveBtn.addEventListener("click", () => sendWebSettings("/api/settings/save", "save"));
+    webSettingsTestBtn.addEventListener("click", () => sendWebSettings("/api/settings/test", "test"));
+    rpcSettingsSaveBtn.addEventListener("click", () => sendRpcSettings("/api/settings/rpc/save", "save"));
+    rpcSettingsTestBtn.addEventListener("click", () => sendRpcSettings("/api/settings/rpc/test", "test"));
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function renderRpcLogs(logs) {
+      if (!logs || !logs.length) {
+        rpcLogContainer.innerHTML = '<div style="color: #888;">Belum ada incoming RPC log.</div>';
+        return;
+      }
+      rpcLogContainer.innerHTML = logs.map(log => {
+        let formattedPayload = log.payload;
+        try {
+          const parsed = JSON.parse(log.payload);
+          formattedPayload = JSON.stringify(parsed, null, 2);
+        } catch (e) {
+          // fallback
+        }
+        return `
+          <div style="border-bottom: 1px dashed #332d29; padding-bottom: 10px; margin-bottom: 10px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span style="color: var(--accent); font-weight: 600;">[${log.timestamp}]</span>
+              <span style="color: #4ec9b0; font-weight: 600;">Topic: ${escapeHtml(log.topic)}</span>
+            </div>
+            <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; color: #ce9178; background: #120e0c; padding: 8px; border-radius: 6px;">${escapeHtml(formattedPayload)}</pre>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function fetchRpcLogs() {
+      if (currentView !== "settings") return;
+      try {
+        const response = await fetch("/api/rpc/logs");
+        if (!response.ok) return;
+        const data = await response.json();
+        renderRpcLogs(data.logs || []);
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    rpcLogRefreshBtn.addEventListener("click", fetchRpcLogs);
+    rpcLogClearBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/rpc/logs/clear", { method: "POST" });
+        renderRpcLogs([]);
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    devicePushAllBtn.addEventListener("click", async () => {
+      devicePushAllBtn.disabled = true;
+      devicePushAllBtn.textContent = "Pushing...";
+      try {
+        const response = await fetch("/api/telemetry/push-all", { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Gagal push telemetry.");
+        }
+        showMessage(deviceMessage, data.message || "Berhasil push telemetri.", "success");
+        setTimeout(() => clearMessage(deviceMessage), 5000);
+      } catch (err) {
+        showMessage(deviceMessage, err.message || "Gagal push telemetri.", "error");
+      } finally {
+        devicePushAllBtn.disabled = false;
+        devicePushAllBtn.textContent = "Push All Telemetry";
+      }
+    });
 
     function setModbusForm(data) {
       document.getElementById("modbus-id").value = data.id || "";
@@ -1064,7 +1195,6 @@
       document.getElementById("device-id").value = data.id || "";
       document.getElementById("device-name").value = data.name || "";
       document.getElementById("device-unit").value = data.unit_id || "";
-      document.getElementById("device-token").value = data.tb_token || "";
       deviceEditingId = data.id || null;
       deviceFormTitle.textContent = deviceEditingId ? "Edit Device" : "Add Device";
 
@@ -1099,7 +1229,7 @@
       if (!items.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 5;
+        cell.colSpan = 4;
         cell.textContent = "Belum ada device.";
         row.appendChild(cell);
         deviceTableBody.appendChild(row);
@@ -1113,9 +1243,6 @@
 
         const unitCell = document.createElement("td");
         unitCell.textContent = item.unit_id;
-
-        const tokenCell = document.createElement("td");
-        tokenCell.textContent = item.tb_token || "";
 
         const dataCell = document.createElement("td");
         const tsWrap = document.createElement("div");
@@ -1156,7 +1283,6 @@
 
         row.appendChild(nameCell);
         row.appendChild(unitCell);
-        row.appendChild(tokenCell);
         row.appendChild(dataCell);
         row.appendChild(actionCell);
         deviceTableBody.appendChild(row);
@@ -1207,7 +1333,6 @@
         modbus_id: currentModbusId,
         name: document.getElementById("device-name").value.trim(),
         unit_id: document.getElementById("device-unit").value,
-        tb_token: document.getElementById("device-token").value.trim(),
         timeseries: collectTimeseries(),
       };
 
@@ -1222,7 +1347,7 @@
           throw new Error(data.detail || "Terjadi kesalahan.");
         }
         showMessage(deviceMessage, data.message || "Device tersimpan.", "success");
-        setDeviceForm({ id: "", name: "", unit_id: "", tb_token: "", timeseries: [] });
+        setDeviceForm({ id: "", name: "", unit_id: "", timeseries: [] });
         setDeviceFormVisible(false);
         refreshDeviceList();
       } catch (err) {
@@ -1266,7 +1391,7 @@
     });
 
     deviceAddBtn.addEventListener("click", () => {
-      setDeviceForm({ id: "", name: "", unit_id: "", tb_token: "", timeseries: [] });
+      setDeviceForm({ id: "", name: "", unit_id: "", timeseries: [] });
       setDeviceFormVisible(true);
     });
 
@@ -1277,7 +1402,7 @@
 
     deviceSaveBtn.addEventListener("click", saveDevice);
     deviceCancelBtn.addEventListener("click", () => {
-      setDeviceForm({ id: "", name: "", unit_id: "", tb_token: "", timeseries: [] });
+      setDeviceForm({ id: "", name: "", unit_id: "", timeseries: [] });
       setDeviceFormVisible(false);
     });
 
@@ -1285,44 +1410,15 @@
       timeseriesList.appendChild(createTimeseriesRow());
     });
 
-    deviceTokenTestBtn.addEventListener("click", async () => {
-      const token = document.getElementById("device-token").value.trim();
-      clearMessage(deviceTokenMessage);
-      if (!token) {
-        showMessage(deviceTokenMessage, "Isi access token terlebih dahulu.", "error");
-        return;
-      }
-      deviceTokenTestBtn.disabled = true;
-      deviceTokenTestBtn.textContent = "Testing...";
-      try {
-        const response = await fetch("/api/devices/test-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tb_token: token }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || "Terjadi kesalahan.");
-        }
-        showMessage(deviceTokenMessage, data.message || "Berhasil.", "success");
-        setTimeout(() => clearMessage(deviceTokenMessage), 5000);
-      } catch (err) {
-        showMessage(deviceTokenMessage, err.message || "Terjadi kesalahan.", "error");
-        setTimeout(() => clearMessage(deviceTokenMessage), 5000);
-      } finally {
-        deviceTokenTestBtn.disabled = false;
-        deviceTokenTestBtn.textContent = "Test Token";
-      }
-    });
-
     loadSettings();
     setModbusForm({ id: "", name: "", ip: "", port: "" });
     setModbusFormVisible(false);
-    setDeviceForm({ id: "", name: "", unit_id: "", tb_token: "", timeseries: [] });
+    setDeviceForm({ id: "", name: "", unit_id: "", timeseries: [] });
     setDeviceFormVisible(false);
     refreshModbusList();
     setInterval(refreshModbusList, 1000);
     setInterval(refreshDeviceList, 1000);
+    setInterval(fetchRpcLogs, 2000);
   </script>
 </body>
 

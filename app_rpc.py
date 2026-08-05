@@ -1,9 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-import http.client
 import json
 import os
-import queue
 import socket
 import sqlite3
 import struct
@@ -11,23 +9,37 @@ import threading
 import time
 from typing import Optional
 
+import paho.mqtt.client as mqtt
 from pymodbus.client import ModbusTcpClient
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_DIR, "newdb.db")
-HTML_PATH = os.path.join(APP_DIR, "newindex.html")
+DB_PATH = os.path.join(APP_DIR, "app_rpc.db")
+HTML_PATH = os.path.join(APP_DIR, "app_rpc.html")
 
-app = FastAPI()
+app = FastAPI(title="ThingsBoard Gateway RPC")
 
 POLL_INTERVAL_SEC = 0.2
 timeseries_next_run: dict[int, float] = {}
 poller_thread: Optional[threading.Thread] = None
 
-telemetry_queue: queue.Queue = queue.Queue(maxsize=2000)
-telemetry_thread: Optional[threading.Thread] = None
-
 settings_cache: dict = {"value": None, "ts": 0.0}
 SETTINGS_CACHE_TTL_SEC = 2.0
+
+rpc_logs: list[dict] = []
+MAX_RPC_LOGS = 100
+
+
+def add_rpc_log(topic: str, raw_payload: str) -> None:
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    log_entry = {
+        "id": int(time.time() * 1000),
+        "timestamp": now_str,
+        "topic": topic,
+        "payload": raw_payload,
+    }
+    rpc_logs.insert(0, log_entry)
+    if len(rpc_logs) > MAX_RPC_LOGS:
+        rpc_logs.pop()
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, col_def: str) -> None:
@@ -36,19 +48,26 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, col_def: st
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
 
 
+def db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def init_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
+    with db_connect() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                tb_ip TEXT NOT NULL,
-                tb_port INTEGER NOT NULL,
-                tb_user TEXT NOT NULL,
-                tb_pass TEXT NOT NULL,
-                tb_rpc_port INTEGER NOT NULL DEFAULT 1883,
-                tb_rpc_token TEXT NOT NULL DEFAULT ''
+                tb_ip TEXT NOT NULL DEFAULT '',
+                tb_port INTEGER NOT NULL DEFAULT 8080,
+                tb_user TEXT NOT NULL DEFAULT '',
+                tb_pass TEXT NOT NULL DEFAULT '',
+                rpc_ip TEXT NOT NULL DEFAULT '',
+                rpc_port INTEGER NOT NULL DEFAULT 1883,
+                rpc_token TEXT NOT NULL DEFAULT ''
             )
             """
         )
@@ -95,39 +114,44 @@ def init_db() -> None:
             """
         )
         ensure_column(conn, "modbus_clients", "name", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "settings", "tb_ip", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "settings", "tb_port", "INTEGER NOT NULL DEFAULT 8080")
+        ensure_column(conn, "settings", "tb_user", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "settings", "tb_pass", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "settings", "rpc_ip", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "settings", "rpc_port", "INTEGER NOT NULL DEFAULT 1883")
+        ensure_column(conn, "settings", "rpc_token", "TEXT NOT NULL DEFAULT ''")
         conn.commit()
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
-    start_telemetry_sender()
-    start_poller()
-
-
-def db_connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
 
 
 def load_settings() -> dict:
     with db_connect() as conn:
         row = conn.execute(
-            "SELECT tb_ip, tb_port, tb_user, tb_pass, tb_rpc_port, tb_rpc_token FROM settings WHERE id = 1"
+            """SELECT tb_ip, tb_port, tb_user, tb_pass,
+                      rpc_ip, rpc_port, rpc_token
+               FROM settings WHERE id = 1"""
         ).fetchone()
 
     if not row:
-        return {"tb_ip": "", "tb_port": "", "tb_user": "", "tb_pass": "", "tb_rpc_port": "1883", "tb_rpc_token": ""}
+        return {
+            "tb_ip": "",
+            "tb_port": "8080",
+            "tb_user": "",
+            "tb_pass": "",
+            "rpc_ip": "",
+            "rpc_port": "1883",
+            "rpc_token": "",
+        }
 
+    keys = row.keys()
     return {
-        "tb_ip": row["tb_ip"],
-        "tb_port": str(row["tb_port"]),
-        "tb_user": row["tb_user"],
-        "tb_pass": row["tb_pass"],
-        "tb_rpc_port": str(row.get("tb_rpc_port", "1883")),
-        "tb_rpc_token": row.get("tb_rpc_token", ""),
+        "tb_ip": row["tb_ip"] if "tb_ip" in keys else "",
+        "tb_port": str(row["tb_port"]) if "tb_port" in keys else "8080",
+        "tb_user": row["tb_user"] if "tb_user" in keys else "",
+        "tb_pass": row["tb_pass"] if "tb_pass" in keys else "",
+        "rpc_ip": row["rpc_ip"] if "rpc_ip" in keys else "",
+        "rpc_port": str(row["rpc_port"]) if "rpc_port" in keys else "1883",
+        "rpc_token": row["rpc_token"] if "rpc_token" in keys else "",
     }
 
 
@@ -142,30 +166,256 @@ def get_settings_cached() -> dict:
     return value
 
 
-def save_settings(settings: dict) -> None:
+def save_web_settings(settings: dict) -> None:
     with db_connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO settings (id, tb_ip, tb_port, tb_user, tb_pass, tb_rpc_port, tb_rpc_token)
-            VALUES (1, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                tb_ip = excluded.tb_ip,
-                tb_port = excluded.tb_port,
-                tb_user = excluded.tb_user,
-                tb_pass = excluded.tb_pass,
-                tb_rpc_port = excluded.tb_rpc_port,
-                tb_rpc_token = excluded.tb_rpc_token
-            """,
-            (
-                settings["tb_ip"],
-                settings["tb_port"],
-                settings["tb_user"],
-                settings["tb_pass"],
-                settings.get("tb_rpc_port", 1883),
-                settings.get("tb_rpc_token", ""),
-            ),
-        )
+        row = conn.execute("SELECT 1 FROM settings WHERE id = 1").fetchone()
+        if not row:
+            conn.execute(
+                """INSERT INTO settings (id, tb_ip, tb_port, tb_user, tb_pass, rpc_ip, rpc_port, rpc_token)
+                   VALUES (1, ?, ?, ?, ?, '', 1883, '')""",
+                (settings["tb_ip"], settings["tb_port"], settings["tb_user"], settings["tb_pass"]),
+            )
+        else:
+            conn.execute(
+                """UPDATE settings
+                   SET tb_ip = ?, tb_port = ?, tb_user = ?, tb_pass = ?
+                   WHERE id = 1""",
+                (settings["tb_ip"], settings["tb_port"], settings["tb_user"], settings["tb_pass"]),
+            )
         conn.commit()
+
+
+def save_rpc_settings(settings: dict) -> None:
+    with db_connect() as conn:
+        row = conn.execute("SELECT 1 FROM settings WHERE id = 1").fetchone()
+        if not row:
+            conn.execute(
+                """INSERT INTO settings (id, tb_ip, tb_port, tb_user, tb_pass, rpc_ip, rpc_port, rpc_token)
+                   VALUES (1, '', 8080, '', '', ?, ?, ?)""",
+                (settings["rpc_ip"], settings["rpc_port"], settings["rpc_token"]),
+            )
+        else:
+            conn.execute(
+                """UPDATE settings
+                   SET rpc_ip = ?, rpc_port = ?, rpc_token = ?
+                   WHERE id = 1""",
+                (settings["rpc_ip"], settings["rpc_port"], settings["rpc_token"]),
+            )
+        conn.commit()
+
+
+def tb_get_bearer_token(settings: dict) -> str:
+    import http.client
+
+    conn = http.client.HTTPConnection(
+        settings["tb_ip"],
+        int(settings["tb_port"]),
+        timeout=10,
+    )
+    payload = json.dumps(
+        {"username": settings["tb_user"], "password": settings["tb_pass"]}
+    )
+    headers = {"Content-Type": "application/json"}
+    try:
+        conn.request("POST", "/api/auth/login", body=payload, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read().decode("utf-8", errors="replace")
+        if resp.status != 200:
+            raise RuntimeError(f"Login failed: {resp.status} {resp.reason}: {data}")
+        token = json.loads(data).get("token")
+        if not token:
+            raise RuntimeError(f"Login response missing token: {data}")
+        return token
+    finally:
+        conn.close()
+
+
+def parse_stored_value(val_str: Optional[object]):
+    if val_str is None:
+        return None
+    s = str(val_str).strip()
+    if s.lower() in ("true", "on"):
+        return 1
+    if s.lower() in ("false", "off"):
+        return 0
+    try:
+        if "." in s:
+            return float(s)
+        return int(s)
+    except ValueError:
+        return s
+
+
+# -----------------------------------------------------------------------------
+# Background MQTT Manager for RPC & Telemetry
+# -----------------------------------------------------------------------------
+
+class MqttManager(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.client = None
+        self.connected = False
+        self.active_settings = None
+        self.running = True
+
+    def run(self):
+        while self.running:
+            try:
+                settings = None
+                with db_connect() as conn:
+                    row = conn.execute("SELECT rpc_ip, rpc_port, rpc_token FROM settings WHERE id = 1").fetchone()
+                    if row and row["rpc_ip"] and row["rpc_token"]:
+                        settings = (row["rpc_ip"], int(row["rpc_port"]), row["rpc_token"])
+
+                if settings != self.active_settings:
+                    if self.client:
+                        print("[MQTT] Settings updated. Reconnecting to new broker/token...")
+                        try:
+                            self.client.loop_stop()
+                            self.client.disconnect()
+                        except Exception as e:
+                            print(f"[MQTT] Error disconnecting old client: {e}")
+                        self.client = None
+                        self.connected = False
+                    self.active_settings = settings
+
+                if self.active_settings and not self.client:
+                    ip, port, token = self.active_settings
+                    if ip and port and token:
+                        try:
+                            try:
+                                client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+                            except AttributeError:
+                                client = mqtt.Client()
+
+                            client.username_pw_set(username=token)
+
+                            def on_connect(*args, **kwargs):
+                                client_obj = args[0]
+                                rc = args[3]
+                                rc_val = getattr(rc, "value", rc)
+                                if rc_val == 0:
+                                    print("[MQTT] Successfully connected to ThingsBoard broker.")
+                                    self.connected = True
+                                    client_obj.subscribe("v1/gateway/rpc")
+                                    client_obj.subscribe("v1/devices/me/rpc/request/+")
+                                else:
+                                    print(f"[MQTT] Connection rejected, rc = {rc_val}")
+                                    self.connected = False
+
+                            def on_disconnect(*args, **kwargs):
+                                print("[MQTT] Connection disconnected.")
+                                self.connected = False
+
+                            def on_message(*args, **kwargs):
+                                client_obj = args[0]
+                                msg = args[2]
+                                topic = getattr(msg, "topic", "v1/gateway/rpc")
+                                raw_str = msg.payload.decode("utf-8", errors="replace")
+                                print(f"[MQTT INCOMING] Topic: {topic} | Payload: {raw_str}")
+                                add_rpc_log(topic, raw_str)
+                                if topic == "v1/gateway/rpc":
+                                    try:
+                                        payload = json.loads(raw_str)
+                                        handle_rpc_command(client_obj, payload)
+                                    except Exception as ex:
+                                        print(f"[MQTT] Error in RPC message handler: {ex}")
+
+                            client.on_connect = on_connect
+                            client.on_disconnect = on_disconnect
+                            client.on_message = on_message
+
+                            print(f"[MQTT] Connecting to {ip}:{port} using Gateway Token {token[:6]}...")
+                            client.connect(ip, port, keepalive=60)
+                            client.loop_start()
+                            self.client = client
+                        except Exception as ex:
+                            print(f"[MQTT] Initial connection failure: {ex}")
+                            self.client = None
+                            self.connected = False
+
+                if self.connected and self.client:
+                    self.publish_all_telemetry()
+
+            except Exception as ex:
+                print(f"[MQTT] Error in background manager thread: {ex}")
+
+            time.sleep(1.0)
+
+    def publish_all_telemetry(self):
+        if not self.connected or not self.client:
+            return
+        try:
+            payload = {}
+            with db_connect() as conn:
+                devices = conn.execute("SELECT id, name FROM devices").fetchall()
+                for d in devices:
+                    ts_rows = conn.execute(
+                        "SELECT key_name, last_value FROM timeseries WHERE device_id = ? AND last_value IS NOT NULL",
+                        (d["id"],),
+                    ).fetchall()
+                    if ts_rows:
+                        device_data = {}
+                        for ts in ts_rows:
+                            parsed_val = parse_stored_value(ts["last_value"])
+                            if parsed_val is not None:
+                                device_data[ts["key_name"]] = sanitize_telemetry_value(parsed_val)
+                        if device_data:
+                            payload[d["name"]] = [device_data]
+
+            if payload:
+                self.client.publish("v1/gateway/telemetry", json.dumps(payload), qos=1)
+        except Exception as ex:
+            print(f"[MQTT] Telemetry push failed: {ex}")
+
+
+def handle_rpc_command(client, payload: dict) -> None:
+    device_name = payload.get("device")
+    data = payload.get("data", {})
+    rpc_id = payload.get("id") if payload.get("id") is not None else data.get("id")
+    method = data.get("method")
+    params = data.get("params")
+
+    if not device_name or not method or rpc_id is None:
+        print(f"[RPC] Error: Invalid RPC request envelope. Request dump: {json.dumps(payload)}")
+        return
+
+    print(f"[RPC] Command received for '{device_name}' (ID={rpc_id}): method='{method}', params={params}")
+
+    response_payload = {
+        "device": device_name,
+        "id": rpc_id,
+        "data": {
+            "success": True,
+            "message": f"RPC command '{method}' received for device '{device_name}'."
+        }
+    }
+    try:
+        client.publish("v1/gateway/rpc", json.dumps(response_payload), qos=1)
+        print(f"[RPC] Sent reply to ThingsBoard for Request ID {rpc_id}.")
+    except Exception as ex:
+        print(f"[RPC] Failed to send reply: {ex}")
+
+
+mqtt_manager = MqttManager()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+    mqtt_manager.start()
+    start_poller()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    mqtt_manager.running = False
+    if mqtt_manager.client:
+        try:
+            mqtt_manager.client.loop_stop()
+            mqtt_manager.client.disconnect()
+        except Exception:
+            pass
 
 
 def list_modbus_clients():
@@ -430,30 +680,6 @@ def normalize_timeseries(items: list[dict]) -> list[dict]:
     return normalized
 
 
-def tb_get_bearer_token(settings: dict) -> str:
-    conn = http.client.HTTPConnection(
-        settings["tb_ip"],
-        settings["tb_port"],
-        timeout=10,
-    )
-    payload = json.dumps(
-        {"username": settings["tb_user"], "password": settings["tb_pass"]}
-    )
-    headers = {"Content-Type": "application/json"}
-    try:
-        conn.request("POST", "/api/auth/login", body=payload, headers=headers)
-        resp = conn.getresponse()
-        data = resp.read().decode("utf-8", errors="replace")
-        if resp.status != 200:
-            raise RuntimeError(f"Login failed: {resp.status} {resp.reason}: {data}")
-        token = json.loads(data).get("token")
-        if not token:
-            raise RuntimeError(f"Login response missing token: {data}")
-        return token
-    finally:
-        conn.close()
-
-
 def sanitize_telemetry_value(value: object):
     if value is None:
         return None
@@ -474,104 +700,8 @@ def sanitize_telemetry_value(value: object):
     return str(value)
 
 
-class MqttManager(threading.Thread):
-    def __init__(self):
-        super().__init__(daemon=True)
-        self.client = None
-        self.connected = False
-        self.active_settings = None
-        self.running = True
-
-    def run(self):
-        while self.running:
-            try:
-                settings = None
-                with db_connect() as conn:
-                    row = conn.execute("SELECT tb_ip, tb_rpc_port, tb_rpc_token FROM settings WHERE id = 1").fetchone()
-                    if row:
-                        settings = (row["tb_ip"], int(row.get("tb_rpc_port", 1883) or 1883), row.get("tb_rpc_token", ""))
-
-                if settings != self.active_settings:
-                    if self.client:
-                        try:
-                            self.client.loop_stop()
-                            self.client.disconnect()
-                        except Exception:
-                            pass
-                        self.client = None
-                        self.connected = False
-                    self.active_settings = settings
-
-                if self.active_settings and not self.client:
-                    ip, port, token = self.active_settings
-                    if ip and port and token:
-                        try:
-                            import paho.mqtt.client as mqtt
-                            try:
-                                client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-                            except AttributeError:
-                                client = mqtt.Client()
-                            client.username_pw_set(username=token)
-                            
-                            def on_connect(*args, **kwargs):
-                                client = args[0]
-                                rc = args[3]
-                                rc_val = getattr(rc, "value", rc)
-                                if rc_val == 0:
-                                    self.connected = True
-                                    client.subscribe("v1/gateway/rpc")
-                                else:
-                                    self.connected = False
-
-                            def on_disconnect(*args, **kwargs):
-                                self.connected = False
-
-                            def on_message(*args, **kwargs):
-                                msg = args[2]
-                                if msg.topic == "v1/gateway/rpc":
-                                    print(f"[MQTT] RPC received: {msg.payload}")
-
-                            client.on_connect = on_connect
-                            client.on_disconnect = on_disconnect
-                            client.on_message = on_message
-
-                            client.connect(ip, port, keepalive=60)
-                            client.loop_start()
-                            self.client = client
-                        except Exception:
-                            self.client = None
-                            self.connected = False
-            except Exception:
-                pass
-            time.sleep(1.0)
-
-    def publish_telemetry(self, device_name, payload):
-        if self.connected and self.client:
-            try:
-                # payload is like {"temp": 42}, ThingsBoard Gateway API format expects: {"Device Name": [{"temp": 42}]}
-                self.client.publish("v1/gateway/telemetry", json.dumps({device_name: [payload]}), qos=1)
-            except Exception:
-                pass
-
-mqtt_manager = MqttManager()
-
-def telemetry_sender_loop() -> None:
-    while True:
-        device_name, payload = telemetry_queue.get()
-        mqtt_manager.publish_telemetry(device_name, payload)
-
-def start_telemetry_sender() -> None:
-    global telemetry_thread
-    if not mqtt_manager.is_alive():
-        mqtt_manager.start()
-    if telemetry_thread and telemetry_thread.is_alive():
-        return
-    telemetry_thread = threading.Thread(target=telemetry_sender_loop, daemon=True)
-    telemetry_thread.start()
-
-
 def check_tcp_online(ip: str, port: int) -> bool:
-    '''check TCP port to gateway'''
+    """check TCP port to gateway"""
     try:
         with socket.create_connection((ip, port), timeout=1):
             return True
@@ -733,7 +863,8 @@ def get_timeseries_jobs():
             SELECT ts.id, ts.key_name, ts.data_type, ts.function_code,
                    ts.object_count, ts.register_address, ts.modifier_on,
                    ts.modifier_type, ts.modifier_value, ts.pull_on,
-                   ts.report_period_ms, d.unit_id, d.tb_token, d.name as device_name, m.ip, m.port
+                   ts.report_period_ms, ts.device_id, d.unit_id, d.name AS device_name,
+                   m.ip, m.port
             FROM timeseries ts
             JOIN devices d ON ts.device_id = d.id
             JOIN modbus_clients m ON d.modbus_id = m.id
@@ -750,10 +881,6 @@ def poller_loop() -> None:
             time.sleep(POLL_INTERVAL_SEC)
             continue
 
-        settings = get_settings_cached()
-        tb_ip = str(settings.get("tb_ip") or "").strip()
-        tb_port = parse_port(str(settings.get("tb_port") or "").strip())
-
         for job in jobs:
             ts_id = int(job["id"])
             interval_ms = 1000
@@ -769,12 +896,15 @@ def poller_loop() -> None:
                 value = read_timeseries_value(job)
                 update_timeseries_result(ts_id, value, "ok")
 
-                device_name = str(job["device_name"])
-                payload = {str(job["key_name"]): sanitize_telemetry_value(value)}
-                try:
-                    telemetry_queue.put_nowait((device_name, payload))
-                except queue.Full:
-                    pass
+                if mqtt_manager.connected and mqtt_manager.client:
+                    device_name = job["device_name"]
+                    key_name = str(job["key_name"])
+                    parsed_val = parse_stored_value(value)
+                    payload = {device_name: [{key_name: sanitize_telemetry_value(parsed_val)}]}
+                    try:
+                        mqtt_manager.client.publish("v1/gateway/telemetry", json.dumps(payload), qos=1)
+                    except Exception:
+                        pass
             except Exception as exc:
                 update_timeseries_result(ts_id, None, f"error: {exc}")
 
@@ -792,7 +922,8 @@ def start_poller() -> None:
 
 
 def load_html() -> str:
-    with open(HTML_PATH, "r", encoding="utf-8") as handle:
+    path = HTML_PATH if os.path.exists(HTML_PATH) else os.path.join(APP_DIR, "index.html")
+    with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
 
 
@@ -811,105 +942,148 @@ def settings_read() -> JSONResponse:
     return JSONResponse(load_settings())
 
 
+# --- Web Settings Endpoints ---
+
 @app.post("/api/settings/save")
-async def settings_save(request: Request) -> JSONResponse:
+async def web_settings_save(request: Request) -> JSONResponse:
     payload = await request.json()
-    settings = {
-        "tb_ip": str(payload.get("tb_ip", "")).strip(),
-        "tb_port": str(payload.get("tb_port", "")).strip(),
-        "tb_user": str(payload.get("tb_user", "")).strip(),
-        "tb_pass": str(payload.get("tb_pass", "")),
-        "tb_rpc_port": str(payload.get("tb_rpc_port", "")).strip(),
-        "tb_rpc_token": str(payload.get("tb_rpc_token", "")).strip(),
-    }
+    tb_ip = str(payload.get("tb_ip", "")).strip()
+    tb_port_raw = payload.get("tb_port", 8080)
+    tb_user = str(payload.get("tb_user", "")).strip()
+    tb_pass = str(payload.get("tb_pass", ""))
 
-    port = parse_port(settings["tb_port"])
-    rpc_port = parse_port(settings["tb_rpc_port"])
-    if not settings["tb_ip"] or port is None:
-        raise HTTPException(status_code=400, detail="IP dan port HTTP wajib diisi.")
-    if rpc_port is None:
-        rpc_port = 1883
+    if not tb_ip or not tb_port_raw:
+        raise HTTPException(status_code=400, detail="IP dan Port wajib diisi.")
 
-    save_settings(
-        {
-            "tb_ip": settings["tb_ip"],
-            "tb_port": port,
-            "tb_user": settings["tb_user"],
-            "tb_pass": settings["tb_pass"],
-            "tb_rpc_port": rpc_port,
-            "tb_rpc_token": settings["tb_rpc_token"],
-        }
-    )
-    return JSONResponse({"ok": True, "message": "Settings tersimpan."})
+    try:
+        tb_port = int(tb_port_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Port harus berupa angka valid.")
+
+    save_web_settings({"tb_ip": tb_ip, "tb_port": tb_port, "tb_user": tb_user, "tb_pass": tb_pass})
+    return JSONResponse({"ok": True, "message": "Web Settings tersimpan."})
 
 
 @app.post("/api/settings/test")
-async def settings_test(request: Request) -> JSONResponse:
-    payload = await request.json()
-    settings = {
-        "tb_ip": str(payload.get("tb_ip", "")).strip(),
-        "tb_port": str(payload.get("tb_port", "")).strip(),
-        "tb_user": str(payload.get("tb_user", "")).strip(),
-        "tb_pass": str(payload.get("tb_pass", "")),
-    }
-
-    port = parse_port(settings["tb_port"])
-    if not settings["tb_ip"] or port is None:
-        raise HTTPException(status_code=400, detail="IP dan port wajib diisi.")
-
-    try:
-        tb_get_bearer_token(
-            {
-                "tb_ip": settings["tb_ip"],
-                "tb_port": port,
-                "tb_user": settings["tb_user"],
-                "tb_pass": settings["tb_pass"],
-            }
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Test gagal: {exc}") from exc
-
-    return JSONResponse({"ok": True, "message": "Login OK, token diterima."})
-
-
-@app.post("/api/settings/test-rpc")
-async def settings_test_rpc(request: Request) -> JSONResponse:
+async def web_settings_test(request: Request) -> JSONResponse:
     payload = await request.json()
     tb_ip = str(payload.get("tb_ip", "")).strip()
-    tb_rpc_port = parse_port(str(payload.get("tb_rpc_port", "")))
-    tb_rpc_token = str(payload.get("tb_rpc_token", "")).strip()
+    tb_port_raw = payload.get("tb_port", 8080)
+    tb_user = str(payload.get("tb_user", "")).strip()
+    tb_pass = str(payload.get("tb_pass", ""))
 
-    if not tb_ip or tb_rpc_port is None or not tb_rpc_token:
-        raise HTTPException(status_code=400, detail="IP, RPC Port, dan Access Token wajib diisi.")
+    if not tb_ip or not tb_port_raw:
+        raise HTTPException(status_code=400, detail="IP dan Port wajib diisi.")
 
-    import paho.mqtt.client as mqtt
     try:
-        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    except AttributeError:
-        client = mqtt.Client()
-    
-    client.username_pw_set(username=tb_rpc_token)
-    
-    success = [False]
-    def on_connect(client, userdata, flags, rc, *args, **kwargs):
-        rc_val = getattr(rc, "value", rc)
-        if rc_val == 0:
-            success[0] = True
-            client.disconnect()
-            
-    client.on_connect = on_connect
+        tb_port = int(tb_port_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Port harus berupa angka valid.")
+
     try:
-        client.connect(tb_ip, tb_rpc_port, keepalive=5)
-        client.loop_start()
-        time.sleep(1)
-        client.loop_stop()
-        if not success[0]:
-             raise Exception("Connection rejected or timeout")
+        token = tb_get_bearer_token({"tb_ip": tb_ip, "tb_port": tb_port, "tb_user": tb_user, "tb_pass": tb_pass})
+        if not token:
+            raise RuntimeError("Token tidak diterima.")
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"MQTT Test gagal: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Login Web HTTP gagal: {exc}") from exc
 
-    return JSONResponse({"ok": True, "message": "MQTT Gateway terhubung dengan sukses!"})
+    return JSONResponse({"ok": True, "message": "Web HTTP login berhasil, token diterima!"})
 
+
+# --- RPC Settings Endpoints ---
+
+@app.post("/api/settings/rpc/save")
+async def rpc_settings_save(request: Request) -> JSONResponse:
+    payload = await request.json()
+    rpc_ip = str(payload.get("rpc_ip", "")).strip()
+    rpc_port_raw = payload.get("rpc_port", 1883)
+    rpc_token = str(payload.get("rpc_token", "")).strip()
+
+    if not rpc_ip or not rpc_token:
+        raise HTTPException(status_code=400, detail="RPC IP dan Access Token wajib diisi.")
+
+    try:
+        rpc_port = int(rpc_port_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Port harus berupa angka valid.")
+
+    save_rpc_settings({"rpc_ip": rpc_ip, "rpc_port": rpc_port, "rpc_token": rpc_token})
+    return JSONResponse({"ok": True, "message": "RPC Settings tersimpan."})
+
+
+@app.post("/api/settings/rpc/test")
+async def rpc_settings_test(request: Request) -> JSONResponse:
+    payload = await request.json()
+    rpc_ip = str(payload.get("rpc_ip", "")).strip()
+    rpc_port_raw = payload.get("rpc_port", 1883)
+    rpc_token = str(payload.get("rpc_token", "")).strip()
+
+    if not rpc_ip or not rpc_token:
+        raise HTTPException(status_code=400, detail="RPC IP dan Access Token wajib diisi.")
+
+    try:
+        rpc_port = int(rpc_port_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Port harus berupa angka valid.")
+
+    connect_event = threading.Event()
+    result_code = [None]
+
+    try:
+        try:
+            client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        except AttributeError:
+            client = mqtt.Client()
+
+        client.username_pw_set(username=rpc_token)
+
+        def test_on_connect(*args, **kwargs):
+            rc = args[3]
+            result_code[0] = getattr(rc, "value", rc)
+            connect_event.set()
+
+        client.on_connect = test_on_connect
+        client.connect_async(rpc_ip, rpc_port, keepalive=10)
+        client.loop_start()
+
+        connected_ok = connect_event.wait(timeout=3.0)
+        client.loop_stop()
+        client.disconnect()
+
+        if not connected_ok:
+            raise HTTPException(status_code=400, detail="Koneksi timeout setelah 3 detik.")
+
+        rc_val = result_code[0]
+        if rc_val == 0:
+            return JSONResponse({"ok": True, "message": "Koneksi MQTT RPC berhasil!"})
+        else:
+            raise HTTPException(status_code=400, detail=f"Koneksi MQTT ditolak (code {rc_val}). Periksa Access Token.")
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=400, detail=f"Gagal terhubung: {e}")
+
+
+# --- RPC Logs Endpoints ---
+
+@app.get("/api/rpc/logs")
+def get_rpc_logs() -> JSONResponse:
+    return JSONResponse({"logs": rpc_logs})
+
+
+@app.post("/api/rpc/logs/clear")
+def clear_rpc_logs() -> JSONResponse:
+    global rpc_logs
+    rpc_logs = []
+    return JSONResponse({"ok": True, "message": "Log RPC terhapus."})
+
+
+@app.post("/api/telemetry/push-all")
+def push_all_telemetry_endpoint() -> JSONResponse:
+    if not mqtt_manager.connected or not mqtt_manager.client:
+        raise HTTPException(status_code=400, detail="MQTT Gateway belum terhubung. Periksa RPC Settings.")
+    mqtt_manager.publish_all_telemetry()
+    return JSONResponse({"ok": True, "message": "Telemetri semua device berhasil dikirim ke ThingsBoard!"})
 
 
 @app.get("/api/modbus")
@@ -1005,7 +1179,6 @@ def device_list(modbus_id: int) -> JSONResponse:
                 "modbus_id": row["modbus_id"],
                 "name": row["name"],
                 "unit_id": row["unit_id"],
-                "tb_token": row["tb_token"],
                 "timeseries": ts_rows,
             }
         )
@@ -1040,7 +1213,6 @@ def device_detail(device_id: int) -> JSONResponse:
             "modbus_id": row["modbus_id"],
             "name": row["name"],
             "unit_id": row["unit_id"],
-            "tb_token": row["tb_token"],
             "timeseries": timeseries_rows,
         }
     )
@@ -1089,12 +1261,7 @@ async def device_delete(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "message": "Device terhapus."})
 
 
-@app.post("/api/devices/test-token")
-async def device_test_token(request: Request) -> JSONResponse:
-    return JSONResponse({"ok": True, "message": "Fitur test token perangkat per individual sudah tidak digunakan. Gunakan Test RPC pada halaman settings."})
-
-
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("newapp:app", host="0.0.0.0", port=8003, reload=True)
+    uvicorn.run("app_rpc:app", host="0.0.0.0", port=8000, reload=True)
