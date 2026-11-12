@@ -1109,9 +1109,19 @@
               <label>Register Address</label>
               <input class="ts-address" type="number" min="1" />
             </div>
+            <div class="form-row ts-rpc-method-group hidden">
+              <label>Method</label>
+              <input class="ts-rpc-method" type="text" placeholder="e.g. setP1" />
+            </div>
+            <div class="form-row ts-rpc-type-group hidden">
+              <label>Type</label>
+              <select class="ts-rpc-type">
+                <option value="binary">binary (true / false)</option>
+              </select>
+            </div>
           </div>
           <div class="ts-controls">
-            <label>
+            <label class="ts-modifier-on-label">
               <input type="checkbox" class="ts-modifier-on" /> Modifier
             </label>
             <select class="ts-modifier-type">
@@ -1119,7 +1129,7 @@
               <option value="multiplier">Multiplier</option>
             </select>
             <input class="ts-modifier-value" type="number" step="0.0001" placeholder="Value" />
-            <label>
+            <label class="ts-pull-on-label">
               <input type="checkbox" class="ts-pull-on" /> Pull strategy
             </label>
             <input class="ts-report" type="number" min="1" placeholder="Report ms" />
@@ -1149,6 +1159,7 @@
         { value: 4, label: "4 Read input register" },
         { value: 1, label: "1 Read coils" },
         { value: 2, label: "2 Read discrete input" },
+        { value: 5, label: "5 Write single coil" },
       ];
 
       const typeSelect = row.querySelector(".ts-type");
@@ -1159,6 +1170,10 @@
       row.querySelector(".ts-key").value = data.key_name || "";
       row.querySelector(".ts-count").value = data.object_count || "";
       row.querySelector(".ts-address").value = data.register_address || "";
+      row.querySelector(".ts-rpc-method").value = data.rpc_method || "";
+      if (data.data_type === "binary") {
+        row.querySelector(".ts-rpc-type").value = "binary";
+      }
 
       const modifierOn = row.querySelector(".ts-modifier-on");
       const modifierType = row.querySelector(".ts-modifier-type");
@@ -1172,7 +1187,32 @@
       pullOn.checked = Boolean(data.pull_on);
       reportField.value = data.report_period_ms ?? "";
 
+      const typeContainer = typeSelect.closest(".form-row");
+      const countContainer = row.querySelector(".ts-count").closest(".form-row");
+      const rpcMethodGroup = row.querySelector(".ts-rpc-method-group");
+      const rpcTypeGroup = row.querySelector(".ts-rpc-type-group");
+
       function updateRowState() {
+        const fCode = Number(functionSelect.value);
+        const isRpc = fCode === 5;
+
+        // Toggle visibility of RPC elements
+        rpcMethodGroup.classList.toggle("hidden", !isRpc);
+        rpcTypeGroup.classList.toggle("hidden", !isRpc);
+
+        // Keep normal elements visible
+        typeContainer.classList.remove("hidden");
+        countContainer.classList.remove("hidden");
+
+        const modLabel = row.querySelector(".ts-modifier-on-label");
+        const pullLabel = row.querySelector(".ts-pull-on-label");
+        
+        if (modLabel) modLabel.classList.remove("hidden");
+        if (modifierType) modifierType.classList.remove("hidden");
+        if (modifierValue) modifierValue.classList.remove("hidden");
+        if (pullLabel) pullLabel.classList.remove("hidden");
+        if (reportField) reportField.classList.remove("hidden");
+
         const modOn = modifierOn.checked;
         modifierType.disabled = !modOn;
         modifierValue.disabled = !modOn;
@@ -1182,6 +1222,7 @@
 
       modifierOn.addEventListener("change", updateRowState);
       pullOn.addEventListener("change", updateRowState);
+      functionSelect.addEventListener("change", updateRowState);
       updateRowState();
 
       row.querySelector(".ts-remove").addEventListener("click", () => {
@@ -1209,19 +1250,24 @@
 
     function collectTimeseries() {
       const rows = Array.from(timeseriesList.querySelectorAll(".ts-row"));
-      return rows.map((row) => ({
-        id: row.dataset.id || null,
-        key_name: row.querySelector(".ts-key").value.trim(),
-        data_type: row.querySelector(".ts-type").value,
-        function_code: Number(row.querySelector(".ts-function").value),
-        object_count: row.querySelector(".ts-count").value,
-        register_address: row.querySelector(".ts-address").value,
-        modifier_on: row.querySelector(".ts-modifier-on").checked,
-        modifier_type: row.querySelector(".ts-modifier-type").value,
-        modifier_value: row.querySelector(".ts-modifier-value").value,
-        pull_on: row.querySelector(".ts-pull-on").checked,
-        report_period_ms: row.querySelector(".ts-report").value,
-      }));
+      return rows.map((row) => {
+        const functionCode = Number(row.querySelector(".ts-function").value);
+        const isRpc = functionCode === 5;
+        return {
+          id: row.dataset.id || null,
+          key_name: row.querySelector(".ts-key").value.trim(),
+          data_type: row.querySelector(".ts-type").value,
+          function_code: functionCode,
+          object_count: row.querySelector(".ts-count").value,
+          register_address: row.querySelector(".ts-address").value,
+          modifier_on: row.querySelector(".ts-modifier-on").checked,
+          modifier_type: row.querySelector(".ts-modifier-type").value,
+          modifier_value: row.querySelector(".ts-modifier-value").value,
+          pull_on: row.querySelector(".ts-pull-on").checked,
+          report_period_ms: row.querySelector(".ts-report").value,
+          rpc_method: isRpc ? row.querySelector(".ts-rpc-method").value.trim() : null,
+        };
+      });
     }
 
     function renderDeviceTable(items) {
@@ -1251,7 +1297,10 @@
           const line = document.createElement("div");
           line.className = "ts-item";
           const value = ts.last_value ?? "-";
-          const label = `${ts.key_name} (addr ${ts.register_address})`;
+          const isRpc = ts.function_code === 5;
+          const label = isRpc 
+            ? `${ts.key_name} [FC 5 RPC: ${ts.rpc_method || ''}] (addr ${ts.register_address})`
+            : `${ts.key_name} (addr ${ts.register_address})`;
           const valueSpan = document.createElement("span");
           valueSpan.textContent = `= ${value}`;
           if (ts.last_status && ts.last_status !== "ok") {

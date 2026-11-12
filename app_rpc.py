@@ -121,6 +121,7 @@ def init_db() -> None:
         ensure_column(conn, "settings", "rpc_ip", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "settings", "rpc_port", "INTEGER NOT NULL DEFAULT 1883")
         ensure_column(conn, "settings", "rpc_token", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "timeseries", "rpc_method", "TEXT")
         conn.commit()
 
 
@@ -382,12 +383,80 @@ def handle_rpc_command(client, payload: dict) -> None:
 
     print(f"[RPC] Command received for '{device_name}' (ID={rpc_id}): method='{method}', params={params}")
 
+    write_success = False
+    write_msg = ""
+    try:
+        with db_connect() as conn:
+            job = conn.execute(
+                """
+                SELECT ts.id, ts.key_name, ts.data_type, ts.function_code,
+                       ts.register_address, d.unit_id, m.ip, m.port
+                FROM timeseries ts
+                JOIN devices d ON ts.device_id = d.id
+                JOIN modbus_clients m ON d.modbus_id = m.id
+                WHERE lower(d.name) = lower(?) AND ts.function_code = 5 AND lower(ts.rpc_method) = lower(?)
+                """,
+                (device_name, method),
+            ).fetchone()
+            
+        if job:
+            modbus_client = ModbusTcpClient(host=job["ip"], port=job["port"], timeout=1)
+            try:
+                if not modbus_client.connect():
+                    raise RuntimeError("Modbus client connection failed")
+                
+                address = max(job["register_address"] - 1, 0)
+                unit_id = job["unit_id"]
+                
+                val_to_write = False
+                if isinstance(params, bool):
+                    val_to_write = params
+                elif str(params).strip().lower() in ("true", "1", "on"):
+                    val_to_write = True
+                
+                print(f"[RPC] Writing Single Coil to address {address} on slave {unit_id} with value {val_to_write}")
+                result = modbus_client.write_coil(
+                    address=address,
+                    value=val_to_write,
+                    device_id=unit_id,
+                )
+                if result.isError():
+                    raise RuntimeError(str(result))
+                
+                write_success = True
+                write_msg = f"Successfully wrote {val_to_write} to coil address {job['register_address']}."
+                
+                # Update timeseries in database
+                update_timeseries_result(job["id"], val_to_write, "ok")
+                
+                # Push telemetry to ThingsBoard Gateway
+                if client:
+                    telemetry_payload = {device_name: [{job["key_name"]: val_to_write}]}
+                    client.publish("v1/gateway/telemetry", json.dumps(telemetry_payload), qos=1)
+            except Exception as ex:
+                write_success = False
+                write_msg = f"Modbus write failed: {ex}"
+                print(f"[RPC] Modbus write error: {ex}")
+            finally:
+                try:
+                    modbus_client.close()
+                except Exception:
+                    pass
+        else:
+            write_success = False
+            write_msg = f"No matching Modbus device/method found for '{device_name}' with method '{method}'"
+            print(f"[RPC] {write_msg}")
+    except Exception as ex:
+        write_success = False
+        write_msg = f"Database query failed: {ex}"
+        print(f"[RPC] Database error: {ex}")
+
     response_payload = {
         "device": device_name,
         "id": rpc_id,
         "data": {
-            "success": True,
-            "message": f"RPC command '{method}' received for device '{device_name}'."
+            "success": write_success,
+            "message": write_msg
         }
     }
     try:
@@ -510,7 +579,8 @@ def list_timeseries(device_id: int):
             """
             SELECT id, key_name, data_type, function_code, object_count,
                    register_address, modifier_on, modifier_type, modifier_value,
-                   pull_on, report_period_ms, last_value, last_status, last_updated
+                   pull_on, report_period_ms, last_value, last_status, last_updated,
+                   rpc_method
             FROM timeseries
             WHERE device_id = ?
             ORDER BY id ASC
@@ -528,9 +598,9 @@ def replace_timeseries(device_id: int, items: list[dict]) -> None:
                 INSERT INTO timeseries (
                     device_id, key_name, data_type, function_code, object_count,
                     register_address, modifier_on, modifier_type, modifier_value,
-                    pull_on, report_period_ms
+                    pull_on, report_period_ms, rpc_method
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     device_id,
@@ -544,6 +614,7 @@ def replace_timeseries(device_id: int, items: list[dict]) -> None:
                     item.get("modifier_value"),
                     1 if item["pull_on"] else 0,
                     item.get("report_period_ms"),
+                    item.get("rpc_method"),
                 ),
             )
         conn.commit()
@@ -611,9 +682,10 @@ ALLOWED_TYPES = {
     "64int",
     "64uint",
     "64float",
+    "binary",
 }
 
-ALLOWED_FUNCTIONS = {1, 2, 3, 4}
+ALLOWED_FUNCTIONS = {1, 2, 3, 4, 5}
 
 
 def parse_int(value: object, field: str) -> int:
@@ -652,6 +724,11 @@ def normalize_timeseries(items: list[dict]) -> list[dict]:
             if report_period_ms <= 0:
                 raise HTTPException(status_code=400, detail="Report period wajib > 0.")
 
+        rpc_method = str(item.get("rpc_method", "")).strip() if item.get("rpc_method") else None
+        if function_code == 5:
+            if not rpc_method:
+                raise HTTPException(status_code=400, detail="Method wajib diisi untuk Function 5.")
+
         if not key_name:
             raise HTTPException(status_code=400, detail="Key name wajib diisi.")
         if data_type not in ALLOWED_TYPES:
@@ -675,6 +752,7 @@ def normalize_timeseries(items: list[dict]) -> list[dict]:
                 "modifier_value": modifier_value,
                 "pull_on": pull_on,
                 "report_period_ms": report_period_ms,
+                "rpc_method": rpc_method,
             }
         )
     return normalized
@@ -753,6 +831,10 @@ def decode_registers(registers: list[int], data_type: str):
 
 
 def decode_bits(bits: list[bool], data_type: str):
+    if data_type == "binary":
+        if len(bits) == 1:
+            return bool(bits[0])
+        return [bool(bit) for bit in bits]
     if len(bits) == 1:
         return 1 if bits[0] else 0
     if data_type == "bits":
@@ -814,6 +896,16 @@ def read_timeseries_value(job: sqlite3.Row):
             value = decode_bits(result.bits[:count], job["data_type"])
         elif function_code == 2:
             result = client.read_discrete_inputs(
+                address=address,
+                count=count,
+                device_id=unit_id,
+            )
+            if result.isError():
+                raise RuntimeError(str(result))
+            value = decode_bits(result.bits[:count], job["data_type"])
+        elif function_code == 5:
+            # Polling write single coil: read using read_coils (FC 1)
+            result = client.read_coils(
                 address=address,
                 count=count,
                 device_id=unit_id,
@@ -1171,6 +1263,8 @@ def device_list(modbus_id: int) -> JSONResponse:
                     "last_value": ts["last_value"],
                     "last_status": ts["last_status"],
                     "last_updated": ts["last_updated"],
+                    "function_code": ts["function_code"],
+                    "rpc_method": ts["rpc_method"],
                 }
             )
         devices.append(
@@ -1205,6 +1299,7 @@ def device_detail(device_id: int) -> JSONResponse:
                 "modifier_value": ts["modifier_value"],
                 "pull_on": bool(ts["pull_on"]),
                 "report_period_ms": ts["report_period_ms"],
+                "rpc_method": ts["rpc_method"],
             }
         )
     return JSONResponse(
